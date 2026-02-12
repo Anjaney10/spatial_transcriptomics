@@ -4,57 +4,61 @@ library(clusterProfiler)
 library(org.Hs.eg.db)
 library(dplyr)
 
-# Seurat v5 helper: safely rename features across layers for an Assay5
+# Seurat v5 helper: safely rename features by rebuilding the assay
 RenameFeaturesSeurat5 <- function(object, assay = "RNA", mapping_df,
-                  from_col = "ENSEMBL", to_col = "SYMBOL",
-                  layers = c("counts", "data")) {
+                  from_col = "ENSEMBL", to_col = "SYMBOL") {
   stopifnot(inherits(object, "Seurat"))
   stopifnot(assay %in% Assays(object))
   stopifnot(all(c(from_col, to_col) %in% colnames(mapping_df)))
 
   # Clean mapping: valid target symbols; 1:1 on source keys
   map <- mapping_df %>%
-  dplyr::select(dplyr::all_of(c(from_col, to_col))) %>%
-  dplyr::filter(!is.na(.data[[to_col]]), .data[[to_col]] != "") %>%
-  dplyr::distinct(.data[[from_col]], .keep_all = TRUE)
+    dplyr::select(dplyr::all_of(c(from_col, to_col))) %>%
+    dplyr::filter(!is.na(.data[[to_col]]), .data[[to_col]] != "") %>%
+    dplyr::distinct(.data[[from_col]], .keep_all = TRUE)
 
-  # Function to rename one layer matrix
-  rename_layer <- function(mat) {
-  old <- rownames(mat)
-  new <- map[[to_col]][match(old, map[[from_col]])]
-  new[is.na(new) | new == ""] <- old
-  new <- make.unique(as.character(new))
-  rownames(mat) <- new
-  mat
+  # Helper: build new names from old names using the mapping
+  # old_names may still have version suffixes, so strip for matching
+  build_new_names <- function(old_names) {
+    stripped <- sub("\\.\\d+$", "", old_names)
+    new <- map[[to_col]][match(stripped, map[[from_col]])]
+    # Keep the original name when no mapping found
+    new[is.na(new) | new == ""] <- old_names[is.na(new) | new == ""]
+    make.unique(as.character(new))
   }
 
-  # Rename requested layers if they exist
-  for (lyr in layers) {
-  mat <- tryCatch(
-    LayerData(object, assay = assay, layer = lyr),
-    error = function(e) NULL
-  )
-  if (!is.null(mat)) {
-    mat2 <- rename_layer(mat)
-    LayerData(object, assay = assay, layer = lyr) <- mat2
+  # Extract existing layer matrices
+  counts_mat <- tryCatch(LayerData(object, assay = assay, layer = "counts"), error = function(e) NULL)
+  data_mat   <- tryCatch(LayerData(object, assay = assay, layer = "data"),   error = function(e) NULL)
+
+  # Rename rownames on the extracted matrices
+  if (!is.null(counts_mat)) {
+    rownames(counts_mat) <- build_new_names(rownames(counts_mat))
   }
+  if (!is.null(data_mat)) {
+    rownames(data_mat) <- build_new_names(rownames(data_mat))
   }
 
-  # Keep VariableFeatures consistent (VariableFeatures() is per-assay in Seurat v5)
+  # Rebuild the Assay5 object from scratch with renamed matrices
+  if (!is.null(counts_mat) && !is.null(data_mat)) {
+    new_assay <- CreateAssay5Object(counts = counts_mat, data = data_mat)
+  } else if (!is.null(counts_mat)) {
+    new_assay <- CreateAssay5Object(counts = counts_mat)
+  } else if (!is.null(data_mat)) {
+    new_assay <- CreateAssay5Object(data = data_mat)
+  } else {
+    warning("No counts or data layer found in assay '", assay, "'")
+    return(object)
+  }
+
+  # Replace the assay
+  object[[assay]] <- new_assay
+
+  # Update VariableFeatures if any
   vf <- tryCatch(VariableFeatures(object[[assay]]), error = function(e) character(0))
   if (length(vf) > 0) {
-  vf_new <- map[[to_col]][match(vf, map[[from_col]])]
-  vf_new[is.na(vf_new) | vf_new == ""] <- vf
-  VariableFeatures(object[[assay]]) <- make.unique(as.character(vf_new))
-  }
-
-  # Rebuild meta.features (Seurat v5 expects feature-level metadata keyed by rownames)
-  feats <- tryCatch(rownames(LayerData(object, assay = assay, layer = "counts")), error = function(e) NULL)
-  if (is.null(feats)) {
-  feats <- tryCatch(rownames(LayerData(object, assay = assay, layer = "data")), error = function(e) NULL)
-  }
-  if (!is.null(feats)) {
-  object[[assay]]@meta.features <- data.frame(row.names = feats)
+    vf_new <- build_new_names(vf)
+    VariableFeatures(object[[assay]]) <- vf_new
   }
 
   object
@@ -70,25 +74,27 @@ ref_features <- tryCatch(
 # If Ensembl IDs contain version suffix (e.g., ENSG... .12), strip it for mapping
 ref_features_stripped <- sub("\\.\\d+$", "", ref_features)
 
+# Remove duplicates before bitr call (bitr errors on duplicate input)
+ref_features_unique <- unique(ref_features_stripped)
+
 mapping <- clusterProfiler::bitr(
-  ref_features_stripped,
+  ref_features_unique,
   fromType = "ENSEMBL",
   toType   = "SYMBOL",
   OrgDb    = org.Hs.eg.db
 )
 
-# Ensure mapping has the same ENSEMBL key format as features (stripped)
-mapping$ENSEMBL <- sub("\\.\\d+$", "", mapping$ENSEMBL)
+# bitr can return 1:many — keep first symbol per ENSEMBL
+mapping <- mapping %>%
+  dplyr::distinct(ENSEMBL, .keep_all = TRUE)
 
-# ---- Apply rename across layers (no scale.data assumed) ----
-# Only rename layers that exist; do NOT touch scale.data
+# ---- Apply rename by rebuilding the assay ----
 ref <- RenameFeaturesSeurat5(
   object = ref,
   assay = "RNA",
   mapping_df = mapping,
   from_col = "ENSEMBL",
-  to_col = "SYMBOL",
-  layers = c("counts", "data")  # add other existing layers here if needed
+  to_col = "SYMBOL"
 )
 
 # ---- Minimal validation ----
