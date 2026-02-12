@@ -1,4 +1,4 @@
-# This code is a short hand way to achieve the conversion by using the in-built meta.features. If you don't have this info, use the other code which extracts the gene symbols from clusterProfiler:bitr() function and then constructs the new seurat object with updated rownames.
+### This code is a short hand way to achieve the conversion by using the in-built meta.features. If you don't have this info, use the other code which extracts the gene symbols from clusterProfiler:bitr() function and then constructs the new seurat object with updated rownames.
 ```
 ref <- readRDS("/path/to/your/dataset.rds")
 
