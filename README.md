@@ -1,1 +1,1 @@
-Snippets to streamline spatial transcriptomics analysis with R code
+Helper functions and code snippets to streamline spatial transcriptomics analysis with R code
