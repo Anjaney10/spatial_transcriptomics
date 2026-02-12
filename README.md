@@ -1,1 +1,1 @@
-# sc_rna_seq_tricks
+Snippets to streamline spatial transcriptomics analysis with R code
