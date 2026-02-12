@@ -1,4 +1,4 @@
-```{r}
+```
 library(Seurat)
 library(clusterProfiler)
 library(org.Hs.eg.db)
