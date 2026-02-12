@@ -1,3 +1,4 @@
+### This is a stand-alone function that can check for data inconsistency and then map the Ensembl IDs to their corresponding gene symbols extracted using clusterProfiler:bitr().
 ```
 library(Seurat)
 library(clusterProfiler)
